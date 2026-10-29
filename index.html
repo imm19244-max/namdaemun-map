@@ -292,7 +292,7 @@ async function loadAll(){
   crowd = (cr.data||[]).map(c=>({zone:c.zone, level:c.level, at:c.created_at}));
   myFavs = new Set();
   if(user){ const mf = await sb.from('favorites').select('place_id').eq('user_id', user.id); (mf.data||[]).forEach(r=>myFavs.add(r.place_id)); }
-  setStatus(); render();
+  if(!err) setStatus(); render();
 }
 function drawAuth(){
   const box=$('#authbar'); if(!box) return; box.textContent='';
