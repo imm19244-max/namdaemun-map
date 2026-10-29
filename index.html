@@ -311,7 +311,7 @@ function drawAuth(){
       btn.disabled=true; msg.textContent='보내는 중…';
       const {error}=await sb.auth.signInWithOtp({email, options:{emailRedirectTo: location.origin+location.pathname}});
       btn.disabled=false;
-      msg.textContent = error ? ('보내지 못했어요: '+error.message) : '메일함에서 로그인 링크를 눌러주세요 📮';
+      msg.textContent = error ? (/rate limit/i.test(error.message||'') ? '로그인 메일을 너무 자주 보냈어요. 잠시(최대 1시간) 뒤에 다시 시도해 주세요 🙏' : '보내지 못했어요: '+error.message) : '메일함에서 로그인 링크를 눌러주세요 📮 (링크는 이 브라우저에서 열어주세요)';
     }},'✉️ 로그인 링크 받기');
     box.append(inp, btn, msg);
   }
