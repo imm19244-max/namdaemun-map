@@ -85,7 +85,20 @@ h1 .p{color:var(--pink)}
 .mk .e{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:15px;background:#D9F5EF}
 .mk.food .e{background:#FFE6DA}
 .mk.on{border-color:#3B2F3A;transform:translateY(-50%) scale(1.12)}
-.card.hl{outline:3px solid var(--pink);outline-offset:2px}
+.card.hl,.shopitem.hl{outline:3px solid var(--pink);outline-offset:2px}
+.street{display:flex;flex-direction:column;gap:6px;background:var(--bg);border-radius:16px;padding:10px}
+.streethead{font-family:var(--body);font-weight:700;font-size:14px}
+.street>.btn{align-self:flex-start}
+.shopitem{background:var(--paper);border:2px solid var(--line);border-radius:14px;padding:6px 8px}
+.shopitem summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;flex-wrap:wrap}
+.shopitem summary::-webkit-details-marker{display:none}
+.shopitem summary::after{content:'▾';margin-left:auto;color:var(--muted)}
+.shopitem[open] summary::after{content:'▴'}
+.avatar.sm{flex:0 0 30px;width:30px;height:30px;border-radius:10px;font-size:17px;display:grid;place-items:center;background:var(--food-soft)}
+.shopitem.shop .avatar.sm{background:var(--shop-soft)} .shopitem.food .avatar.sm{background:var(--food-soft)}
+.sname{font-weight:700}
+.scount{font-size:12.5px;color:var(--muted)}
+.shopbody{display:flex;flex-direction:column;gap:8px;padding-top:8px}
 .nocoord{font-size:12.5px;color:var(--muted)}
 .zone-g{cursor:pointer;transition:opacity .2s}
 .zone-g .pill{stroke-width:2.5}
@@ -226,7 +239,7 @@ label{display:flex;flex-direction:column;gap:4px;font-size:13.5px;color:var(--mu
     <div class="list" id="list" style="margin-top:10px"><div class="empty">장소를 불러오는 중이에요 🐾</div></div>
   </section>
 
-  <section class="addbox" aria-labelledby="addtitle">
+  <section class="addbox" id="addbox" aria-labelledby="addtitle">
     <h2 id="addtitle">➕ 장소 올리기</h2>
     <p class="note" id="addnote">스레드·블로그에서 본 곳이나 직접 가본 곳을 올려주세요. 출처를 같이 적으면 더 믿음직해요!</p>
     <form id="addform">
@@ -234,6 +247,7 @@ label{display:flex;flex-direction:column;gap:4px;font-size:13.5px;color:var(--mu
         <label for="f-name">이름<input id="f-name" required maxlength="40" placeholder="예: ○○ 그릇가게"></label>
         <label for="f-zone">구역<select id="f-zone" required></select></label>
         <label for="f-cat">종류<select id="f-cat" required></select></label>
+        <label for="f-parent">어느 골목·거리 안에 있나요? (선택)<select id="f-parent"></select></label>
         <label for="f-addr">주소 (선택)<input id="f-addr" maxlength="80" placeholder="예: 남대문시장4길 21 E동 지하1층"></label>
       </div>
       <label for="f-tip" style="margin-top:10px">한 줄 팁<textarea id="f-tip" rows="2" maxlength="160" placeholder="예: 오전 10시 전에 가면 줄 없음"></textarea></label>
@@ -282,7 +296,7 @@ const CFG = window.APP_CONFIG || {};
 const sb = (window.supabase && CFG.SUPABASE_URL && CFG.SUPABASE_KEY) ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY) : null;
 async function loadAll(){
   const [pl, tp, fc, cr] = await Promise.all([
-    sb.from('places').select('id,name,zone,cat,addr,tip,source,lat,lng,coord_status,status,created_by').order('name').range(0,499),
+    sb.from('places').select('id,name,zone,cat,addr,tip,source,lat,lng,coord_status,status,created_by,kind,parent_id').order('name').range(0,499),
     sb.from('tips').select('id,place_id,body,created_by,created_at,status').order('created_at').range(0,1999),
     sb.rpc('favorite_counts'),
     sb.rpc('recent_crowd')
@@ -295,6 +309,8 @@ async function loadAll(){
   crowd = (cr.data||[]).map(c=>({zone:c.zone, level:c.level, at:c.created_at}));
   myFavs = new Set();
   if(user){ const mf = await sb.from('favorites').select('place_id').eq('user_id', user.id); (mf.data||[]).forEach(r=>myFavs.add(r.place_id)); }
+  const fp=$('#f-parent'); if(fp){ const cur=fp.value; fp.textContent=''; fp.append(el('option',{value:''},'없음 (따로 있는 가게·장소)'));
+    spots.filter(x=>x.kind==='street'&&x.status==='published').sort((a,b)=>a.name.localeCompare(b.name,'ko')).forEach(x=>fp.append(el('option',{value:x.id},(zoneById[x.zone]?zoneById[x.zone].em+' ':'')+x.name))); fp.value=cur; }
   if(!err) setStatus(); render();
 }
 function drawAuth(){
@@ -382,8 +398,9 @@ function drawMarkers(){
   if(shown.length && !fitted){ kmap.setBounds(bounds); fitted=true; }
 }
 function focusCard(id){
-  selected=id; drawMarkers();
+  selected=id; render();
   const c=document.querySelector('[data-id="'+CSS.escape(id)+'"]');
+  if(c && c.tagName==='DETAILS') c.open=true;
   document.querySelectorAll('.card.hl').forEach(x=>x.classList.remove('hl'));
   if(c){ c.classList.add('hl'); c.scrollIntoView({behavior:'smooth',block:'center'}); }
 }
@@ -454,12 +471,16 @@ function render(){
   const gname = {all:'📍 장소 목록',food:'🍜 먹거리',shop:'🛍️ 쇼핑'}[groupFilter];
   $('#listtitle').textContent = zoneFilter ? zoneById[zoneFilter].em+' '+zoneById[zoneFilter].name : gname;
   const list=$('#list'); list.textContent='';
-  let rows = spots.filter(s=>(groupFilter==='all'||groupOf(s)===groupFilter)&&(!zoneFilter||s.zone===zoneFilter)&&(!catFilter||s.cat===catFilter));
   const likeCount = id => favCount[id] || 0;
-  rows.sort((a,b)=>likeCount(b.id)-likeCount(a.id) || String(a.name).localeCompare(String(b.name),'ko'));
-  if(!spots.length){ list.append(el('div',{class:'empty'}, db? '아직 올라온 장소가 없어요. 아래에서 첫 장소를 붙여주세요 📌' : '공유 장소를 불러올 수 없어요. 로그인한 상태로 열어주세요 🙏')); return; }
-  if(!rows.length){ list.append(el('div',{class:'empty'},'여긴 아직 비어 있어요 🐣 필터를 바꾸거나 첫 장소를 올려주세요!')); return; }
-  for(const s of rows){
+  const byLike = (a,b)=>likeCount(b.id)-likeCount(a.id) || String(a.name).localeCompare(String(b.name),'ko');
+  const ids = new Set(spots.map(x=>x.id));
+  const isChild = x => x.parent_id && ids.has(x.parent_id);
+  const kidsOf = id => spots.filter(c=>c.parent_id===id).sort(byLike);
+  // 골목 안 가게는 따로 카드로 늘어놓지 않고 골목 카드 안에 넣음. 필터에 맞는 가게가 있으면 그 골목도 보여줌.
+  let rows = spots.filter(x=>!isChild(x) && (passFilter(x) || kidsOf(x.id).some(passFilter))).sort(byLike);
+  if(!spots.length){ list.append(el('div',{class:'empty'}, '아직 올라온 장소가 없어요. 아래에서 첫 장소를 추천해 주세요 📌')); return; }
+  if(!rows.length){ list.append(el('div',{class:'empty'},'여긴 아직 비어 있어요 🐣 필터를 바꾸거나 첫 장소를 추천해 주세요!')); return; }
+  const cardOf = (s, child) => {
     const n = likeCount(s.id);
     const mine = !!me && myFavs.has(s.id);
     const z = zoneById[s.zone]; const grp = groupOf(s);
@@ -468,9 +489,7 @@ function render(){
     const likeBtn = el('button',{class:'btn like','aria-pressed':String(!!mine),disabled:pending?true:null,onclick:()=>toggleLike(s.id,mine)}, (mine?'💖 ':'🤍 ')+'가고싶어 '+n);
     const tipInput = el('input',{id:'tip-'+s.id,maxlength:'120',placeholder:'💬 꿀팁 한 줄','aria-label':s.name+' 꿀팁'});
     const tipForm = el('form',{class:'tipform',onsubmit:e=>{e.preventDefault(); addTip(s.id, tipInput);}}, tipInput, el('button',{class:'btn',type:'submit',disabled:pending?true:null},'남기기'));
-    list.append(el('article',{class:'card '+grp+(selected===s.id?' hl':''),'data-id':s.id},
-      el('div',{class:'top'}, el('div',{class:'avatar','aria-hidden':'true'}, emojiOf(s)),
-        el('div',{style:'min-width:0'}, el('h3',{},s.name), el('div',{class:'tags'}, pending? el('span',{class:'tag pend'}, s.status==='hidden'?'🙈 숨김':'⏳ 승인 대기') : null, el('span',{class:'tag'},(catById[s.cat]?catById[s.cat].em+' ':'')+(s.cat||'기타')), el('span',{class:'tag'}, z? z.em+' '+z.name : '📍 기타')))),
+    const body = [
       s.addr? el('div',{class:'addr'}, '📍 '+s.addr) : null,
       s.tip? el('p',{class:'tip'}, '💡 '+s.tip) : null,
       s.source? el('div',{class:'src'}, '📚 출처 ['+(srcs.indexOf(s.source)+1)+'] · 맨 아래 참고') : null,
@@ -478,11 +497,36 @@ function render(){
       el('div',{class:'actions'}, hasCoord(s)? el('button',{class:'btn',onclick:()=>goToSpot(s)},'🗺️ 지도에서 보기') : null, ...mapLinks(s), likeBtn),
       (pending && me && s.created_by===me && s.status==='pending') ? el('div',{class:'actions'}, el('button',{class:'btn',onclick:()=>cancelPlace(s)}, confirmId==='p:'+s.id?'정말 취소할까요? 한 번 더 누르기':'추천 취소')) : null,
       el('div',{class:'tips'}, ...myTips.map(t=>tipRow(t)), pending? el('div',{class:'meta'},'승인되면 꿀팁을 남길 수 있어요') : tipForm)
-    ));
-  }
+    ];
+    const tags = el('div',{class:'tags'}, pending? el('span',{class:'tag pend'}, s.status==='hidden'?'🙈 숨김':'⏳ 승인 대기') : null,
+      child? null : el('span',{class:'tag'},(catById[s.cat]?catById[s.cat].em+' ':'')+(s.cat||'기타')),
+      child? null : el('span',{class:'tag'}, z? z.em+' '+z.name : '📍 기타'));
+    if(child){
+      const open = selected===s.id || openShops.has(s.id);
+      const d = el('details',{class:'shopitem '+grp+(selected===s.id?' hl':''),'data-id':s.id, open: open?true:null},
+        el('summary',{}, el('span',{class:'avatar sm','aria-hidden':'true'}, emojiOf(s)), el('span',{class:'sname'}, s.name), tags, el('span',{class:'scount'}, '💖 '+n)),
+        el('div',{class:'shopbody'}, ...body));
+      d.addEventListener('toggle',()=>{ if(d.open) openShops.add(s.id); else openShops.delete(s.id); });
+      return d;
+    }
+    const kids = kidsOf(s.id);
+    const street = s.kind==='street' ? el('div',{class:'street'},
+      el('div',{class:'streethead'}, '🏠 이 골목 안 가게 '+kids.length+'곳'),
+      ...kids.map(k=>cardOf(k,true)),
+      kids.length? null : el('div',{class:'meta'},'아직 등록된 가게가 없어요.'),
+      el('button',{class:'btn',onclick:()=>recommendIn(s)},'➕ 이 골목에 가게 추천')) : null;
+    return el('article',{class:'card '+grp+(selected===s.id?' hl':''),'data-id':s.id},
+      el('div',{class:'top'}, el('div',{class:'avatar','aria-hidden':'true'}, emojiOf(s)), el('div',{style:'min-width:0'}, el('h3',{},s.name), tags)),
+      ...body.slice(0,5), street, ...body.slice(5));
+  };
+  for(const s of rows) list.append(cardOf(s,false));
 }
 
-let editingTip=null, confirmId=null;
+let editingTip=null, confirmId=null, openShops=new Set();
+function recommendIn(st){
+  $('#f-parent').value=st.id; $('#f-zone').value=st.zone; $('#f-cat').value=st.cat==='먹거리'?'먹거리':st.cat;
+  $('#addbox').scrollIntoView({behavior:'smooth',block:'start'}); setTimeout(()=>$('#f-name').focus(),400);
+}
 const canWriteNow = () => !!sb && !!user;
 let flashTimer=null;
 function flash(m){
@@ -562,14 +606,15 @@ function fillForm(){
     e.preventDefault();
     if(!canWriteNow()) return needLogin();
     const name=$('#f-name').value.trim(); if(!name) return;
-    const body={name, zone:$('#f-zone').value, cat:$('#f-cat').value, addr:$('#f-addr').value.trim()||null, tip:$('#f-tip').value.trim()||null, source:$('#f-src').value.trim()||null};
+    const parent=$('#f-parent').value||null; const pz=parent && spots.find(x=>x.id===parent);
+    const body={name, parent_id:parent, kind:'shop', zone: pz? pz.zone : $('#f-zone').value, cat:$('#f-cat').value, addr:$('#f-addr').value.trim()||null, tip:$('#f-tip').value.trim()||null, source:$('#f-src').value.trim()||null};
     $('#addbtn').disabled=true;
     const {error}=await sb.from('places').insert(body);
     $('#addbtn').disabled=false;
     if(error) return sbErr(error);
     ['#f-name','#f-addr','#f-tip','#f-src'].forEach(s=>$(s).value='');
     flash('추천했어요! 관리자 확인 후 모두에게 공개돼요 ⏳');
-    groupFilter='all'; zoneFilter=body.zone; await loadAll();
+    $('#f-parent').value=''; groupFilter='all'; zoneFilter=body.zone; await loadAll();
   });
 }
 
