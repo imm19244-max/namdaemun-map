@@ -7,15 +7,16 @@
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Gowun+Dodum&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
 <style>
 /* Layout: 말랑한 스티커 지도 → 먹거리/쇼핑 탭 → 종류 칩 → 스티커 카드 목록 → 추가 폼. 먹거리=살구, 쇼핑=민트 */
 :root{
   --bg:#FFF7FB; --paper:#FFFFFF; --ink:#3B2F3A; --muted:#8A7A88; --line:#F0DCE7;
   --food:#FF9E7A; --food-soft:#FFE6DA; --shop:#5CC8B4; --shop-soft:#D9F5EF;
   --pink:#FF7EB0; --pink-soft:#FFE1EE; --sky:#E9F4FF; --road:#FFFFFF; --yellow:#FFD96A;
-  --display:"Jua","Gowun Dodum",system-ui,sans-serif;
-  --body:"Gowun Dodum",system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;
+  --display:"Jua","Pretendard",system-ui,sans-serif;
+  --body:"Pretendard",system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#1F1A22; --paper:#2A232D; --ink:#F6EAF2; --muted:#BBA9B7; --line:#43384A;
@@ -27,6 +28,7 @@
   --pink:#FF8DBA; --pink-soft:#4A2638; --sky:#232B36; --road:#342C38; --yellow:#E7C553; color-scheme:dark}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
+.flash{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:50;max-width:min(92vw,420px);background:var(--ink);color:var(--bg);border-radius:16px;padding:10px 16px;font-size:14.5px;box-shadow:0 6px 20px rgba(0,0,0,.25);text-align:center}
 .authbar{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center;font-size:13.5px}
 .authbar input{width:auto;flex:1 1 200px;max-width:260px;padding:6px 11px}
 .authbar .who{color:var(--muted)}
@@ -482,12 +484,17 @@ function render(){
 
 let editingTip=null, confirmId=null;
 const canWriteNow = () => !!sb && !!user;
-function needLogin(){ $('#toast').textContent='로그인하면 쓸 수 있어요. 맨 위에서 로그인해 주세요 🙂'; const a=$('#authbar'); if(a) a.scrollIntoView({behavior:'smooth',block:'center'}); }
+let flashTimer=null;
+function flash(m){
+  let f=$('#flash'); if(!f){ f=el('div',{id:'flash',class:'flash',role:'status','aria-live':'polite'}); document.body.append(f); }
+  f.textContent=m; f.hidden=false; clearTimeout(flashTimer); flashTimer=setTimeout(()=>{f.hidden=true;},3500);
+}
+function needLogin(){ flash('로그인하면 쓸 수 있어요. 맨 위 이메일 칸에서 로그인해 주세요 🙂'); }
 function sbErr(error){
   const m = error.code==='23505' ? '이미 등록된 장소예요. 목록에서 찾아보세요 🙂'
     : (error.code==='42501' || /row-level security/i.test(error.message||'')) ? '권한이 없어서 저장하지 못했어요.'
     : '저장하지 못했어요: '+(error.message||'알 수 없는 오류');
-  $('#toast').textContent=m; console.error(error); return m;
+  flash(m); console.error(error); return m;
 }
 function tipRow(t){
   const own = !!me && t.by===me;
@@ -510,7 +517,7 @@ async function delTip(t){
 async function cancelPlace(p){
   if(confirmId!=='p:'+p.id){ confirmId='p:'+p.id; render(); return; }
   confirmId=null; const {error}=await sb.from('places').delete().eq('id',p.id); if(error) return sbErr(error);
-  $('#toast').textContent='추천을 취소했어요.'; await loadAll();
+  flash('추천을 취소했어요.'); await loadAll();
 }
 async function toggleLike(spotId, mine){
   if(!canWriteNow()) return needLogin();
@@ -540,7 +547,7 @@ async function reportCrowd(level){
   if(!canWriteNow()) return needLogin();
   const zone=$('#c-zone').value;
   const {error}=await sb.from('crowd_reports').upsert({zone, level, user_id:user.id, created_at:new Date().toISOString()});
-  if(error) return sbErr(error); $('#toast').textContent='제보 고마워요! 🙌'; await loadAll();
+  if(error) return sbErr(error); flash('제보 고마워요! 🙌'); await loadAll();
 }
 function fillForm(){
   const cz=$('#c-zone'); ZONES.forEach(z=>cz.append(el('option',{value:z.id},z.em+' '+z.name)));
@@ -561,7 +568,7 @@ function fillForm(){
     $('#addbtn').disabled=false;
     if(error) return sbErr(error);
     ['#f-name','#f-addr','#f-tip','#f-src'].forEach(s=>$(s).value='');
-    $('#toast').textContent='추천했어요! 관리자 확인 후 모두에게 공개돼요 ⏳';
+    flash('추천했어요! 관리자 확인 후 모두에게 공개돼요 ⏳');
     groupFilter='all'; zoneFilter=body.zone; await loadAll();
   });
 }
