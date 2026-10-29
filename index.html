@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>남대문 같이지도</title>
 <script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Gowun+Dodum&display=swap">
 <style>
@@ -26,6 +27,9 @@
   --pink:#FF8DBA; --pink-soft:#4A2638; --sky:#232B36; --road:#342C38; --yellow:#E7C553; color-scheme:dark}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
+.authbar{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center;font-size:13.5px}
+.authbar input{width:auto;flex:1 1 200px;max-width:260px;padding:6px 11px}
+.authbar .who{color:var(--muted)}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15.5px;line-height:1.6;
   background-image:radial-gradient(var(--line) 1.2px,transparent 1.2px);background-size:22px 22px}
 .wrap{max-width:760px;margin:0 auto;padding-block:22px 56px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:18px}
@@ -141,6 +145,7 @@ label{display:flex;flex-direction:column;gap:4px;font-size:13.5px;color:var(--mu
     <h1>남대문 <span class="p">같이지도</span></h1>
     <p class="lede">글과 후기에서 모은 남대문시장 먹거리·쇼핑 스팟! 가본 곳, 가고 싶은 곳, 꿀팁을 같이 쌓아요 💕</p>
     <div class="status" id="status"><span class="stat">불러오는 중…</span></div>
+    <div class="authbar" id="authbar"></div>
   </header>
 
   <div class="tabs" role="group" aria-label="먹거리 또는 쇼핑 보기">
@@ -269,6 +274,50 @@ const zoneById = Object.fromEntries(ZONES.map(z=>[z.id,z]));
 const groupOf = s => (catById[s.cat]||{}).g || ((zoneById[s.zone]||{}).g) || 'shop';
 const emojiOf = s => (catById[s.cat]||{}).em || (zoneById[s.zone]||{}).em || '📍';
 let spots = [], likes = [], tips = [], crowd = [];
+let favCount = {}, myFavs = new Set(), user = null;
+const CFG = window.APP_CONFIG || {};
+const sb = (window.supabase && CFG.SUPABASE_URL && CFG.SUPABASE_KEY) ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY) : null;
+async function loadAll(){
+  const [pl, tp, fc, cr] = await Promise.all([
+    sb.from('places').select('id,name,zone,cat,addr,tip,source,lat,lng,coord_status,status,created_by').order('name').range(0,499),
+    sb.from('tips').select('id,place_id,body,created_by,created_at,status').order('created_at').range(0,1999),
+    sb.rpc('favorite_counts'),
+    sb.rpc('recent_crowd')
+  ]);
+  const err = pl.error || tp.error || fc.error || cr.error;
+  if(err){ $('#toast').textContent=''; $('#status').textContent=''; $('#status').append(el('span',{class:'stat'},'데이터를 불러오지 못했어요: '+err.message)); console.error(err); }
+  spots = (pl.data||[]).map(p=>Object.assign({}, p, {lat: p.lat==null?null:Number(p.lat), lng: p.lng==null?null:Number(p.lng)}));
+  tips = (tp.data||[]).map(t=>({id:t.id, spot:t.place_id, text:t.body, by:t.created_by, at:t.created_at, status:t.status}));
+  favCount = Object.fromEntries((fc.data||[]).map(r=>[r.place_id, Number(r.n)]));
+  crowd = (cr.data||[]).map(c=>({zone:c.zone, level:c.level, at:c.created_at}));
+  myFavs = new Set();
+  if(user){ const mf = await sb.from('favorites').select('place_id').eq('user_id', user.id); (mf.data||[]).forEach(r=>myFavs.add(r.place_id)); }
+  setStatus(); render();
+}
+function drawAuth(){
+  const box=$('#authbar'); if(!box) return; box.textContent='';
+  if(!sb) return;
+  if(user){
+    box.append(el('span',{class:'who'},'🙋 '+(user.email||'로그인됨')), el('button',{class:'btn',onclick:async()=>{ await sb.auth.signOut(); }},'로그아웃'));
+  } else {
+    const inp=el('input',{type:'email',placeholder:'이메일 주소','aria-label':'로그인 이메일',autocomplete:'email'});
+    const msg=el('span',{class:'who','aria-live':'polite'});
+    const btn=el('button',{class:'btn',onclick:async()=>{
+      const email=inp.value.trim(); if(!email){ inp.focus(); return; }
+      btn.disabled=true; msg.textContent='보내는 중…';
+      const {error}=await sb.auth.signInWithOtp({email, options:{emailRedirectTo: location.origin+location.pathname}});
+      btn.disabled=false;
+      msg.textContent = error ? ('보내지 못했어요: '+error.message) : '메일함에서 로그인 링크를 눌러주세요 📮';
+    }},'✉️ 로그인 링크 받기');
+    box.append(inp, btn, msg);
+  }
+}
+function initAuth(){
+  sb.auth.onAuthStateChange((_e, session)=>{
+    const was = user && user.id; user = session ? session.user : null; me = user ? user.id : null;
+    drawAuth(); if((user&&user.id)!==was) loadAll();
+  });
+}
 const LV = {1:{em:'😌',t:'여유'},2:{em:'🙂',t:'보통'},3:{em:'😵',t:'붐빔'}};
 function crowdOf(zid){
   const now=Date.now();
@@ -402,13 +451,13 @@ function render(){
   $('#listtitle').textContent = zoneFilter ? zoneById[zoneFilter].em+' '+zoneById[zoneFilter].name : gname;
   const list=$('#list'); list.textContent='';
   let rows = spots.filter(s=>(groupFilter==='all'||groupOf(s)===groupFilter)&&(!zoneFilter||s.zone===zoneFilter)&&(!catFilter||s.cat===catFilter));
-  const likeCount = id => likes.filter(l=>l.spot===id).length;
+  const likeCount = id => favCount[id] || 0;
   rows.sort((a,b)=>likeCount(b.id)-likeCount(a.id) || String(a.name).localeCompare(String(b.name),'ko'));
   if(!spots.length){ list.append(el('div',{class:'empty'}, db? '아직 올라온 장소가 없어요. 아래에서 첫 장소를 붙여주세요 📌' : '공유 장소를 불러올 수 없어요. 로그인한 상태로 열어주세요 🙏')); return; }
   if(!rows.length){ list.append(el('div',{class:'empty'},'여긴 아직 비어 있어요 🐣 필터를 바꾸거나 첫 장소를 올려주세요!')); return; }
   for(const s of rows){
     const n = likeCount(s.id);
-    const mine = me && likes.some(l=>l.spot===s.id&&l.by===me);
+    const mine = !!me && myFavs.has(s.id);
     const z = zoneById[s.zone]; const grp = groupOf(s);
     const myTips = tips.filter(t=>t.spot===s.id).sort((a,b)=>String(a.at).localeCompare(String(b.at)));
     const likeBtn = el('button',{class:'btn like','aria-pressed':String(!!mine),disabled:(!db||!me||readOnly)?true:null,onclick:()=>toggleLike(s.id,mine)}, (mine?'💖 ':'🤍 ')+'가고싶어 '+n);
@@ -482,7 +531,7 @@ function setStatus(){
   if(!db && !spots.length){ s.append(el('span',{class:'stat'},'공유 데이터 없이 보는 중이에요')); return; }
   const food = spots.filter(x=>groupOf(x)==='food').length;
   s.append(el('span',{class:'stat'},'🍜 먹거리 ',el('b',{},food)), el('span',{class:'stat'},'🛍️ 쇼핑 ',el('b',{},spots.length-food)),
-           el('span',{class:'stat'},'💬 꿀팁 ',el('b',{},tips.length)), el('span',{class:'stat'},'💖 ',el('b',{},likes.length)));
+           el('span',{class:'stat'},'💬 꿀팁 ',el('b',{},tips.length)), el('span',{class:'stat'},'💖 ',el('b',{},Object.values(favCount).reduce((a,b)=>a+b,0))));
 }
 
 async function start(){
@@ -490,7 +539,8 @@ async function start(){
   if(!window.claude||!window.claude.use){
     // 4단계: 로그인·공동저장(Supabase)은 5단계에서 연결. 지금은 백업한 장소 데이터를 읽기 전용으로 표시.
     $('#addbtn').disabled=true;
-    $('#addnote').textContent='장소 올리기·꿀팁·가고싶어·붐빔 제보는 로그인 기능을 연결한 뒤에 열려요. (준비 중)';
+    $('#addnote').textContent='장소 올리기·꿀팁·가고싶어·붐빔 제보 저장은 다음 단계에서 열려요. (준비 중)';
+    if(sb){ initAuth(); await loadAll(); return; }
     try{ const r=await fetch('data/places.json',{cache:'no-cache'}); spots=await r.json(); }
     catch(e){ spots=[]; }
     setStatus(); render(); return;
