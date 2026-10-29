@@ -30,7 +30,7 @@
 [hidden]{display:none!important}
 .flash{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:50;max-width:min(92vw,420px);background:var(--ink);color:var(--bg);border-radius:16px;padding:10px 16px;font-size:14.5px;box-shadow:0 6px 20px rgba(0,0,0,.25);text-align:center}
 .authbar{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center;font-size:13.5px}
-.authbar input{width:auto;flex:1 1 200px;max-width:260px;padding:6px 11px}
+.authbar input{width:auto;flex:1 1 140px;max-width:200px;padding:6px 11px}
 .authbar .who{color:var(--muted)}
 .tag.pend{background:var(--yellow);color:#3B2F3A;border-color:var(--yellow)}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15.5px;line-height:1.6;
@@ -313,24 +313,49 @@ async function loadAll(){
     spots.filter(x=>x.kind==='street'&&x.status==='published').sort((a,b)=>a.name.localeCompare(b.name,'ko')).forEach(x=>fp.append(el('option',{value:x.id},(zoneById[x.zone]?zoneById[x.zone].em+' ':'')+x.name))); fp.value=cur; }
   if(!err) setStatus(); render();
 }
+// 닉네임 + 비밀번호 로그인 (메일 발송 없음). 닉네임을 내부용 주소로 바꿔 Supabase 이메일/비밀번호 로그인에 사용.
+const NICK_RE=/^[0-9A-Za-z가-힣_]{2,10}$/;
+function nickToEmail(nick){
+  const hex=[...new TextEncoder().encode(nick.trim().toLowerCase())].map(b=>b.toString(16).padStart(2,'0')).join('');
+  return 'n'+hex+'@users.namdaemun-map.vercel.app';
+}
+function authMsg(error){
+  const m=(error&&error.message)||'';
+  if(/Invalid login credentials/i.test(m)) return '닉네임이나 비밀번호가 맞지 않아요.';
+  if(/already registered|already exists/i.test(m)) return '이미 있는 닉네임이에요. 다른 닉네임을 써주세요.';
+  if(/Password should be at least/i.test(m)) return '비밀번호는 6자 이상으로 해주세요.';
+  if(/rate limit/i.test(m)) return '잠시 뒤에 다시 시도해 주세요.';
+  if(/Email not confirmed/i.test(m)) return '가입 확인 설정이 아직 켜져 있어요. (관리자 설정 필요)';
+  if(/captcha/i.test(m)) return '"사람입니다" 확인을 해주세요.';
+  return '처리하지 못했어요: '+m;
+}
 function drawAuth(){
   const box=$('#authbar'); if(!box) return; box.textContent='';
   const note=$('#addnote'); if(note&&sb) note.textContent = user ? '스레드·블로그에서 본 곳이나 직접 가본 곳을 추천해 주세요. 관리자 확인 후 모두에게 공개돼요. 출처를 같이 적으면 더 믿음직해요!' : '로그인하면 장소 추천·꿀팁·가고싶어·붐빔 제보를 할 수 있어요. 읽기는 누구나 가능해요.';
   if(!sb) return;
   if(user){
-    box.append(el('span',{class:'who'},'🙋 '+(user.email||'로그인됨')), el('button',{class:'btn',onclick:async()=>{ await sb.auth.signOut(); }},'로그아웃'));
-  } else {
-    const inp=el('input',{type:'email',placeholder:'이메일 주소','aria-label':'로그인 이메일',autocomplete:'email'});
-    const msg=el('span',{class:'who','aria-live':'polite'});
-    const btn=el('button',{class:'btn',onclick:async()=>{
-      const email=inp.value.trim(); if(!email){ inp.focus(); return; }
-      btn.disabled=true; msg.textContent='보내는 중…';
-      const {error}=await sb.auth.signInWithOtp({email, options:{emailRedirectTo: location.origin+location.pathname}});
-      btn.disabled=false;
-      msg.textContent = error ? (/rate limit/i.test(error.message||'') ? '로그인 메일을 너무 자주 보냈어요. 잠시(최대 1시간) 뒤에 다시 시도해 주세요 🙏' : '보내지 못했어요: '+error.message) : '메일함에서 로그인 링크를 눌러주세요 📮 (링크는 이 브라우저에서 열어주세요)';
-    }},'✉️ 로그인 링크 받기');
-    box.append(inp, btn, msg);
+    const nick=(user.user_metadata&&user.user_metadata.nickname)||'로그인됨';
+    box.append(el('span',{class:'who'},'🙋 '+nick), el('button',{class:'btn',onclick:async()=>{ await sb.auth.signOut(); }},'로그아웃'));
+    return;
   }
+  const nickIn=el('input',{type:'text',placeholder:'닉네임 (2~10자)','aria-label':'닉네임',autocomplete:'username',maxlength:'10'});
+  const pwIn=el('input',{type:'password',placeholder:'비밀번호 (6자 이상)','aria-label':'비밀번호',autocomplete:'current-password'});
+  const msg=el('span',{class:'who','aria-live':'polite'});
+  const check=()=>{ const n=nickIn.value.trim(), p=pwIn.value;
+    if(!NICK_RE.test(n)){ msg.textContent='닉네임은 한글·영문·숫자·_ 2~10자로 해주세요.'; nickIn.focus(); return null; }
+    if(p.length<6){ msg.textContent='비밀번호는 6자 이상으로 해주세요.'; pwIn.focus(); return null; }
+    return {n,p}; };
+  const login=el('button',{class:'btn',onclick:async()=>{ const v=check(); if(!v) return; msg.textContent='확인 중…';
+    const {error}=await sb.auth.signInWithPassword({email:nickToEmail(v.n), password:v.p});
+    msg.textContent = error ? authMsg(error) : ''; }},'로그인');
+  const join=el('button',{class:'btn',onclick:async()=>{ const v=check(); if(!v) return; msg.textContent='가입 중…';
+    const {data,error}=await sb.auth.signUp({email:nickToEmail(v.n), password:v.p, options:{data:{nickname:v.n}}});
+    if(error){ msg.textContent=authMsg(error); return; }
+    if(!data.session){ msg.textContent='가입은 됐는데 바로 로그인이 안 됐어요. (관리자: 메일 확인 끄기 필요)'; return; }
+    await sb.from('profiles').update({nickname:v.n}).eq('id',data.user.id);
+    msg.textContent=''; flash('가입 완료! 환영해요 🎉'); }},'가입하기');
+  pwIn.addEventListener('keydown',e=>{ if(e.key==='Enter') login.click(); });
+  box.append(nickIn, pwIn, login, join, msg);
 }
 function initAuth(){
   sb.auth.onAuthStateChange((_e, session)=>{
