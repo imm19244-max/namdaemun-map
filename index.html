@@ -32,6 +32,7 @@
 .authbar{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center;font-size:13.5px}
 .authbar input{width:auto;flex:1 1 140px;max-width:200px;padding:6px 11px}
 .authbar .who{color:var(--muted)}
+.linkbtn{border:0;background:none;color:var(--muted);text-decoration:underline;font:inherit;font-size:13px;cursor:pointer;padding:4px}
 .tag.pend{background:var(--yellow);color:#3B2F3A;border-color:var(--yellow)}
 body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15.5px;line-height:1.6;
   background-image:radial-gradient(var(--line) 1.2px,transparent 1.2px);background-size:22px 22px}
@@ -315,6 +316,7 @@ async function loadAll(){
 }
 // 닉네임 + 비밀번호 로그인 (메일 발송 없음). 닉네임을 내부용 주소로 바꿔 Supabase 이메일/비밀번호 로그인에 사용.
 const NICK_RE=/^[0-9A-Za-z가-힣_]{2,10}$/;
+let authMode='login';
 function nickToEmail(nick){
   const hex=[...new TextEncoder().encode(nick.trim().toLowerCase())].map(b=>b.toString(16).padStart(2,'0')).join('');
   return 'n'+hex+'@users.namdaemun-map.vercel.app';
@@ -339,11 +341,14 @@ function drawAuth(){
     return;
   }
   const nickIn=el('input',{type:'text',placeholder:'닉네임 (2~10자)','aria-label':'닉네임',autocomplete:'username',maxlength:'10'});
-  const pwIn=el('input',{type:'password',placeholder:'비밀번호 (6자 이상)','aria-label':'비밀번호',autocomplete:'current-password'});
+  const joining = authMode==='join';
+  const pwIn=el('input',{type:'password',placeholder:'비밀번호 (6자 이상)','aria-label':'비밀번호',autocomplete: joining?'new-password':'current-password'});
+  const pw2In=el('input',{type:'password',placeholder:'비밀번호 한 번 더','aria-label':'비밀번호 확인',autocomplete:'new-password'});
   const msg=el('span',{class:'who','aria-live':'polite'});
   const check=()=>{ const n=nickIn.value.trim(), p=pwIn.value;
     if(!NICK_RE.test(n)){ msg.textContent='닉네임은 한글·영문·숫자·_ 2~10자로 해주세요.'; nickIn.focus(); return null; }
     if(p.length<6){ msg.textContent='비밀번호는 6자 이상으로 해주세요.'; pwIn.focus(); return null; }
+    if(joining && p!==pw2In.value){ msg.textContent='비밀번호가 서로 달라요. 다시 확인해 주세요.'; pw2In.focus(); return null; }
     return {n,p}; };
   const login=el('button',{class:'btn',onclick:async()=>{ const v=check(); if(!v) return; msg.textContent='확인 중…';
     const {error}=await sb.auth.signInWithPassword({email:nickToEmail(v.n), password:v.p});
@@ -354,8 +359,9 @@ function drawAuth(){
     if(!data.session){ msg.textContent='가입은 됐는데 바로 로그인이 안 됐어요. (관리자: 메일 확인 끄기 필요)'; return; }
     await sb.from('profiles').update({nickname:v.n}).eq('id',data.user.id);
     msg.textContent=''; flash('가입 완료! 환영해요 🎉'); }},'가입하기');
-  pwIn.addEventListener('keydown',e=>{ if(e.key==='Enter') login.click(); });
-  box.append(nickIn, pwIn, login, join, msg);
+  const swap=el('button',{class:'linkbtn',onclick:()=>{ authMode = joining?'login':'join'; drawAuth(); }}, joining?'이미 가입했어요 → 로그인':'처음이에요 → 가입하기');
+  if(joining){ pw2In.addEventListener('keydown',e=>{ if(e.key==='Enter') join.click(); }); box.append(nickIn, pwIn, pw2In, join, swap, msg); }
+  else { pwIn.addEventListener('keydown',e=>{ if(e.key==='Enter') login.click(); }); box.append(nickIn, pwIn, login, swap, msg); }
 }
 function initAuth(){
   sb.auth.onAuthStateChange((_e, session)=>{
