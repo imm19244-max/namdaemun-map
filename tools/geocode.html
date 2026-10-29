@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>좌표 확인 도구</title>
+<script src="../config.js"></script>
+<style>
+body{font-family:system-ui,"Apple SD Gothic Neo",sans-serif;margin:16px;color:#222;background:#fff}
+table{border-collapse:collapse;width:100%;font-size:13px;margin:12px 0}
+td,th{border:1px solid #ddd;padding:5px 7px;text-align:left;vertical-align:top}
+.ok{color:#0a7}.no{color:#c33}
+#map{width:100%;height:420px;border:1px solid #ddd}
+textarea{width:100%;height:160px;font-family:monospace;font-size:12px}
+</style>
+</head>
+<body>
+<h1>좌표 확인 도구 (관리자용)</h1>
+<p>저장된 장소의 주소를 카카오 주소검색으로 좌표로 바꿔서 보여줘요. <b>자동 저장은 하지 않아요.</b> 지도에서 위치를 눈으로 확인한 뒤에만 반영해 주세요. 번지가 없는 길 이름만 있는 주소는 건너뛰어요.</p>
+<div id="map"></div>
+<table><thead><tr><th>id</th><th>이름</th><th>저장된 주소</th><th>검색한 주소</th><th>결과</th></tr></thead><tbody id="rows"></tbody></table>
+<h2>결과 JSON</h2>
+<textarea id="out" readonly></textarea>
+<script>
+function normalize(addr){
+  if(!addr) return null;
+  let m = addr.match(/^(\S+가)\s+(\d+(?:-\d+)?)/);           // 지번: 남대문로4가 20-42
+  if(m) return m[1]+' '+m[2];
+  m = addr.match(/^(\S+(?:길|로))\s+(\d+(?:-\d+)?)/);         // 도로명: 남대문시장4길 3
+  if(m) return m[1]+' '+m[2];
+  return null;                                                // 번지 없음 → 건너뜀
+}
+const s=document.createElement('script');
+s.src='https://dapi.kakao.com/v2/maps/sdk.js?appkey='+encodeURIComponent(window.APP_CONFIG.KAKAO_JS_KEY)+'&autoload=false&libraries=services';
+s.onerror=()=>{ document.getElementById('map').textContent='SDK를 불러오지 못했어요 (도메인 등록 확인)'; };
+s.onload=()=>kakao.maps.load(run);
+document.head.append(s);
+async function run(){
+  const places = await (await fetch('../data/places.json',{cache:'no-cache'})).json();
+  const map = new kakao.maps.Map(document.getElementById('map'),{center:new kakao.maps.LatLng(37.5,127.0),level:8});
+  const geo = new kakao.maps.services.Geocoder();
+  const bounds = new kakao.maps.LatLngBounds(); const out=[];
+  for(const p of places){
+    const q = normalize(p.addr); const tr=document.createElement('tr');
+    const cells=[p.id,p.name,p.addr||'',q?('서울 중구 '+q):'(건너뜀)'];
+    cells.forEach(t=>{ const td=document.createElement('td'); td.textContent=t; tr.append(td); });
+    const res=document.createElement('td'); tr.append(res); document.getElementById('rows').append(tr);
+    if(!q){ res.innerHTML='<span class="no">번지 없음 — 좌표 미확인 유지</span>'; out.push({id:p.id,status:'skipped'}); continue; }
+    const r = await new Promise(ok=>geo.addressSearch('서울 중구 '+q,(data,st)=>ok({data,st})));
+    if(r.st===kakao.maps.services.Status.OK && r.data.length){
+      const d=r.data[0]; const lat=+d.y, lng=+d.x;
+      res.innerHTML='<span class="ok">'+d.address_name+'<br>'+lat.toFixed(6)+', '+lng.toFixed(6)+(r.data.length>1?'<br>(후보 '+r.data.length+'개 중 첫 번째)':'')+'</span>';
+      const pos=new kakao.maps.LatLng(lat,lng); bounds.extend(pos);
+      new kakao.maps.Marker({map,position:pos,title:p.name});
+      new kakao.maps.CustomOverlay({map,position:pos,yAnchor:2.4,content:'<div style="background:#fff;border:1px solid #333;border-radius:6px;padding:1px 5px;font-size:11px">'+p.name.replace(/</g,'&lt;')+'</div>'});
+      out.push({id:p.id,query:'서울 중구 '+q,matched:d.address_name,lat,lng,candidates:r.data.length,status:'found'});
+    } else { res.innerHTML='<span class="no">검색 결과 없음</span>'; out.push({id:p.id,query:'서울 중구 '+q,status:'not_found'}); }
+  }
+  if(!bounds.isEmpty()) map.setBounds(bounds);
+  document.getElementById('out').value=JSON.stringify(out,null,1);
+  window.GEOCODE_RESULT=out;
+}
+</script>
+</body>
+</html>
